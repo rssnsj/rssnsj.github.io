@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GTO Calculator</title>
+<script>
+
+function setCookie(cname, cvalue, exdays = 10) {
+	var d = new Date();
+	d.setTime(d.getTime() + (exdays*24*60*60*1000));
+	var expires = "expires=" + d.toGMTString();
+	document.cookie = cname + "=" + cvalue + "; " + expires;
+}
+
+function getCookie(cname) {
+	var name = cname + "=";
+	var ca = document.cookie.split(';');
+	for (var i = 0; i < ca.length; i++) {
+		var c = ca[i].trim();
+		if (c.indexOf(name) == 0)
+			return c.substring(name.length, c.length);
+	}
+	return "";
+}
+
+function do_save_inputs() {
+	var inputs = document.getElementById("input_form").getElementsByTagName("input");
+	for (var i = 0; i < inputs.length; i++) {
+		var input = inputs[i];
+		if (input.id)
+			setCookie(input.id, input.value);
+	}
+}
+
+function do_load_inputs() {
+	var inputs = document.getElementById("input_form").getElementsByTagName("input");
+	for (var i = 0; i < inputs.length; i++) {
+		var input = inputs[i];
+		if (input.id) {
+			var v = getCookie(input.id);
+			if (v)
+				input.value = v;
+		}
+	}
+}
+
+/* --------------------------------------------- */
+
+const PI = Math.PI;
+const E = Math.E;
+function sqrt(x) { return Math.sqrt(x); }
+function cbrt(x) { return Math.cbrt(x); }
+function pow(x, y) { return Math.pow(x, y); }
+function cos(x) { return Math.cos(x); }
+function ln(x) { return Math.log(x); }
+
+const R = 6378170;
+const u = 398600441800000; /* u=G*m1 -- https://en.wikipedia.org/wiki/Standard_gravitational_parameter */
+const t_GEO = 86400 * 365.24 / 366.24;
+const h_GEO = cbrt(u * pow(t_GEO / 2 / PI, 2)) - R;
+
+/* --------------------------------------------- */
+
+/* get speed relative to earth rotating speed at current orbit */
+function orbit_speed_to_ground(h, vo, incl) {
+	var v_rotate = PI * 2 * (R + h) / t_GEO;
+	var vg2 = vo*vo + v_rotate*v_rotate - 2 * vo * v_rotate * cos(incl);
+	/* neglect float precision issue */
+	if (vg2 < 0 && vg2 > -0.00001)
+		vg2 = 0;
+	return sqrt(vg2);
+}
+
+/* get orbit speed from ground speed at current orbit (perigee only) */
+function ground_speed_to_orbit(h, vg, incl, which) {
+	var v_rotate = PI * 2 * (R + h) / t_GEO;
+	var a = 1;
+	var b = -2 * v_rotate * cos(incl);
+	var c = v_rotate*v_rotate - vg*vg;
+
+	var vo_both = [(-b + sqrt(b*b - 4*a*c)) / (2*a), (-b - sqrt(b*b - 4*a*c)) / (2*a)];
+
+	return vo_both[which];
+}
+
+/* convert speed to selected unit for print */
+function v_text(v) {
+	var unit = document.getElementById("speed_unit").value;
+	if (unit == "km/h") {
+		return (v * 3.6).toFixed(2) + " km/h";
+	} else {
+		return v.toFixed(2) + " m/s";
+	}
+}
+
+/* convert speed to selected unit */
+function v_to_unit(v) {
+	var unit = document.getElementById("speed_unit").value;
+	if (unit == "km/h") {
+		return v * 3.6;
+	} else {
+		return v;
+	}
+}
+
+/* convert speed from selected unit of input */
+function v_of_input(input) {
+	var unit = document.getElementById("speed_unit").value;
+	if (unit == "km/h") {
+		return parseFloat(input) / 3.6;
+	} else {
+		return parseFloat(input);
+	}
+}
+
+/* convert height from m to km for print */
+function h_text(h) {
+	return (h / 1000).toFixed(2);
+}
+
+/* convert inclination from radian to degrees for print */
+function incl_text(incl) {
+	return (incl / PI * 180).toFixed(2) + "°";
+}
+
+/* convert orbit period from seconds for print */
+function t_text(t) {
+	var unit = document.getElementById("time_unit").value;
+	if (unit.startsWith("h")) {
+		return (t / 3600).toFixed(2) + " h";
+	} else if (unit.startsWith("m")) {
+		return (t / 60).toFixed(2) + " min";
+	} else {
+		return t.toFixed(2) + " s";
+	}
+}
+
+function do_gto_calculate(no_change_object = null) {
+	/* no_change_object: the speed input box which triggers this action */
+	var hp   = parseFloat(document.getElementById("perigee").value) * 1000;
+	var ha   = parseFloat(document.getElementById("apogee").value) * 1000;
+	var incl = parseFloat(document.getElementById("inclination").value) / 180 * PI;
+	var sat_mass = parseFloat(document.getElementById("sat_mass").value);
+	var isp  = parseFloat(document.getElementById("prop_isp").value);
+
+	var s = "", dv1 = 0, dv2 = 0;
+
+	/* Initial orbit */
+	var va = sqrt((2 / (ha + R) - 1 / ((ha + hp) / 2 + R)) * u);
+	var vp = sqrt((2 / (hp + R) - 1 / ((ha + hp) / 2 + R)) * u);
+	var t  = PI * 2 * sqrt(pow((ha + hp) / 2 + R, 3) / u);
+
+	s += "Initial GTO orbit: " + h_text(hp) + " x " + h_text(ha) + " x " + incl_text(incl) + "\n";
+	s += "  perigee speed: " + v_text(vp) + "  (ground: " + v_text(orbit_speed_to_ground(hp, vp, incl)) + ")\n";
+	s += "  apogee speed: "  + v_text(va) + "  (ground: " + v_text(orbit_speed_to_ground(ha, va, incl)) + ")\n";
+	s += "  period: " + t_text(t) + "\n";
+	s += "\n";
+
+	/* Write speeds to the text boxes */
+	var o = null;
+	if ((o = document.getElementById("perigee_orbit_speed")) != no_change_object)
+		o.value = v_to_unit(vp).toFixed(2);
+	if ((o = document.getElementById("perigee_ground_speed")) != no_change_object)
+		o.value = v_to_unit(orbit_speed_to_ground(hp, vp, incl)).toFixed(2);
+	if ((o = document.getElementById("apogee_orbit_speed")) != no_change_object)
+		o.value = v_to_unit(va).toFixed(2);
+	if ((o = document.getElementById("apogee_ground_speed")) != no_change_object)
+		o.value = v_to_unit(orbit_speed_to_ground(ha, va, incl)).toFixed(2);
+
+	/* Update speed units behind each text box */
+	var speed_unit = document.getElementById("speed_unit").value;
+	var labels = document.getElementsByClassName("speed_unit_label");
+	for (var i = 0; i < labels.length; i++)
+		labels[i].innerHTML = speed_unit;
+
+	if (ha < h_GEO) {
+		/* Sub-GTO */
+		s += "sub-GTO orbit.\n\n";
+
+		/* Apogee raise at first perigee */
+		var __vp = vp;
+		ha = h_GEO;
+		t  = PI * 2 * sqrt(pow((ha + hp) / 2 + R, 3) / u);
+		vp = sqrt((2 / (hp + R) - 1 / ((ha + hp) / 2 + R)) * u);
+		va = sqrt((2 / (ha + R) - 1 / ((ha + hp) / 2 + R)) * u);
+		dv1 = vp - __vp;
+
+		s += "apogee raise at first perigee\n";
+		s += "  target orbit: " + h_text(hp) + " x " + h_text(ha) + " x " + incl_text(incl) + "\n";
+		s += "  period: " + t_text(t) + "\n";
+		s += "  target perigee speed: " + v_text(vp) + "  (ground: " + v_text(orbit_speed_to_ground(hp, vp, incl)) + ")\n";
+		s += "  target apogee speed: "  + v_text(va) + "  (ground: " + v_text(orbit_speed_to_ground(ha, va, incl)) + ")\n";
+		s += "  delta-V: " + v_text(dv1) + "\n";
+		s += "\n";
+
+		/* Perigee raise and inclination fix to final GEO orbit */
+		var __va = va;
+		hp = h_GEO;
+		t  = PI * 2 * sqrt(pow((ha + hp) / 2 + R, 3) / u);
+		vp = sqrt((2 / (hp + R) - 1 / ((ha + hp) / 2 + R)) * u);
+		va = sqrt((2 / (ha + R) - 1 / ((ha + hp) / 2 + R)) * u);
+		dv2 = sqrt(__va*__va + va*va - 2 * __va*va * cos(incl));
+		incl = 0;
+
+		s += "perigee raise and inclination fix\n";
+		s += "  target orbit: " + h_text(hp) + " x " + h_text(ha) + " x " + incl_text(incl) + "\n";
+		s += "  period: " + t_text(t) + "\n";
+		s += "  target perigee speed: " + v_text(vp) + "  (ground: " + v_text(orbit_speed_to_ground(hp, vp, incl)) + ")\n";
+		s += "  target apogee speed: "  + v_text(va) + "  (ground: " + v_text(orbit_speed_to_ground(ha, va, incl)) + ")\n";
+		s += "  delta-V: " + v_text(dv2) + "\n";
+		s += "\n";
+	} else {
+		/* Super-GTO */
+		s += "GTO or super-GTO orbit.\n\n";
+
+		/* Perigee raise and inclination fix at first apogee */
+		var __va = va;
+		hp = h_GEO;
+		t  = PI * 2 * sqrt(pow((ha + hp) / 2 + R, 3) / u);
+		vp = sqrt((2 / (hp + R) - 1 / ((ha + hp) / 2 + R)) * u);
+		va = sqrt((2 / (ha + R) - 1 / ((ha + hp) / 2 + R)) * u);
+		dv1 = sqrt(__va*__va + va*va - 2 * __va*va * cos(incl));
+		incl = 0;
+
+		s += "perigee raise and inclination fix at first apogee\n";
+		s += "  target orbit: " + h_text(hp) + " x " + h_text(ha) + " x " + incl_text(incl) + "\n";
+		s += "  period: " + t_text(t) + "\n";
+		s += "  target perigee speed: " + v_text(vp) + "  (ground: " + v_text(orbit_speed_to_ground(hp, vp, incl)) + ")\n";
+		s += "  target apogee speed: "  + v_text(va) + "  (ground: " + v_text(orbit_speed_to_ground(ha, va, incl)) + ")\n";
+		s += "  delta-V: " + v_text(dv1) + "\n";
+		s += "\n";
+
+		/* Apogee reduce at next perigee */
+		var __vp = vp;
+		ha = h_GEO;
+		t  = PI * 2 * sqrt(pow((ha + hp) / 2 + R, 3) / u);
+		vp = sqrt((2 / (hp + R) - 1 / ((ha + hp) / 2 + R)) * u);
+		va = sqrt((2 / (ha + R) - 1 / ((ha + hp) / 2 + R)) * u);
+		dv2 = __vp - vp;
+
+		s += "apogee reduce at next perigee\n";
+		s += "  target orbit: " + h_text(hp) + " x " + h_text(ha) + " x " + incl_text(incl) + "\n";
+		s += "  period: " + t_text(t) + "\n";
+		s += "  target perigee speed: " + v_text(vp) + "  (ground: " + v_text(orbit_speed_to_ground(hp, vp, incl)) + ")\n";
+		s += "  target apogee speed: "  + v_text(va) + "  (ground: " + v_text(orbit_speed_to_ground(ha, va, incl)) + ")\n";
+		s += "  delta-V: " + v_text(-dv2) + "\n";
+		s += "\n";
+	}
+
+	/* Total costs */
+	var dv_total = dv1 + dv2;
+	var final_sat_mass = sat_mass / pow(E, dv_total / isp)
+
+	s += "orbit injection cost\n";
+	s += "  total delta-V required: " + v_text(dv_total) + "\n";
+	s += "  satellite propellant cost: " + (sat_mass - final_sat_mass).toFixed(2) + " kg\n";
+	s += "  satellite mass in final orbit: " + final_sat_mass.toFixed(2) + " kg\n";
+
+	document.getElementById("output_area").value = s;
+}
+
+function do_swap_a_p() {
+	var p = document.getElementById("perigee");
+	var a = document.getElementById("apogee");
+	var s = p.value;
+	p.value = a.value;
+	a.value = s;
+	do_gto_calculate();
+}
+
+function do_reset() {
+	if (!confirm('Reset all parameters?'))
+		return;
+	document.getElementById("input_form").reset();
+	do_gto_calculate();
+}
+
+function do_change_speed_unit(o) {
+	if (o.value == "m/s") {
+		o.value = "km/h";
+	} else {
+		o.value = "m/s";
+	}
+	do_gto_calculate();
+}
+
+function do_change_time_unit(o) {
+	if (o.value.startsWith("h")) {
+		o.value = "seconds";
+	} else if (o.value.startsWith("m")) {
+		o.value = "hours";
+	} else {
+		o.value = "minutes";
+	}
+	do_gto_calculate();
+}
+
+function do_change_perigee_orbit_speed(o) {
+	var hp   = parseFloat(document.getElementById("perigee").value) * 1000;
+	var incl = parseFloat(document.getElementById("inclination").value) / 180 * PI;
+	var vp = v_of_input(o.value);
+
+	var ha = (hp + R)*(hp + R) / (2 * u / vp / vp - (hp + R)) - R;
+
+	document.getElementById("apogee").value = (ha / 1000).toFixed(2);
+	do_gto_calculate(o);
+}
+
+function do_change_perigee_ground_speed(o) {
+	var hp   = parseFloat(document.getElementById("perigee").value) * 1000;
+	var incl = parseFloat(document.getElementById("inclination").value) / 180 * PI;
+	var vg = v_of_input(o.value);
+
+	var ha = null;
+	for (var i = 0; i <= 1; i++) {
+		var vp = ground_speed_to_orbit(hp, vg, incl, i);
+		if (isNaN(vp))
+			continue;
+		ha = (hp + R)*(hp + R) / (2 * u / vp / vp - (hp + R)) - R;
+		if (ha >= hp && ha > 0)
+			break;
+	}
+	if (ha == null) {
+		alert("Invalid ground speed");
+		return;
+	}
+
+	document.getElementById("apogee").value = (ha / 1000).toFixed(2);
+	do_gto_calculate(o);
+}
+
+function do_change_apogee_orbit_speed(o) {
+	var ha   = parseFloat(document.getElementById("apogee").value) * 1000;
+	var incl = parseFloat(document.getElementById("inclination").value) / 180 * PI;
+	var va = v_of_input(o.value);
+
+	var hp = (ha + R)*(ha + R) / (2 * u / va / va - (ha + R)) - R;
+
+	document.getElementById("perigee").value = (hp / 1000).toFixed(2);
+	do_gto_calculate(o);
+}
+
+function do_change_apogee_ground_speed(o) {
+	var ha   = parseFloat(document.getElementById("apogee").value) * 1000;
+	var incl = parseFloat(document.getElementById("inclination").value) / 180 * PI;
+	var vg = v_of_input(o.value);
+
+	var hp = null;
+	for (var i = 1; i >= 0; i--) {
+		var va = ground_speed_to_orbit(ha, vg, incl, i);
+		if (isNaN(va))
+			continue;
+		hp = (ha + R)*(ha + R) / (2 * u / va / va - (ha + R)) - R;
+		if (hp <= ha && hp > 0)
+			break;
+	}
+	if (hp == null) {
+		alert("Invalid ground speed");
+		return;
+	}
+
+	document.getElementById("perigee").value = (hp / 1000).toFixed(2);
+	do_gto_calculate(o);
+}
+
+</script>
+<style>
+#input_form table { border-collapse:collapse; font-size:16px }
+#input_form table tbody th { padding:1px; text-align:left; min-width:150px; }
+#input_form table tbody td { padding:1px; text-align:left; }
+#input_form table tbody td input { width:90px; height:20px; text-align:right; font-size:14px; }
+#input_form table tbody td input.swap_button { margin:5px 0px; width:35px; height:40px; border:none; padding:0px; text-align:center; font-size:14px; }
+#input_form table tfoot th { padding:1px; text-align:left; }
+#input_form table tfoot th input { margin:5px 5px 5px 0px; height:28px; text-align:center; font-size:14px; }
+#speed_area { margin:5px 0px 0px 0px; }
+#speed_area table { border-collapse:collapse; font-size:14px }
+#speed_area table th { padding:1px; text-align:left; }
+#speed_area table td { padding:1px 3px; text-align:left; }
+#speed_area table td input { width:85px; height:20px; text-align:right; font-size:14px; }
+#output_area { width:99%; height:600px; margin:10px 0px 0px 0px; resize:vertical; }
+</style>
+</head>
+<body onload="do_load_inputs(); do_gto_calculate();" onunload="do_save_inputs();">
+<form id="input_form">
+	<table>
+		<tbody>
+			<tr>
+				<th>Perigee:</th>
+				<td><input type="number" value="200" id="perigee" onchange="do_gto_calculate();" /> km</td>
+				<td rowspan="2"><input type="button" value="↑↓" class="swap_button" onclick="do_swap_a_p();" /></td>
+			</tr>
+			<tr>
+				<th>Apogee:</th>
+				<td><input type="number" value="30000" id="apogee" onchange="do_gto_calculate();" /> km</td>
+			</tr>
+			<tr>
+				<th>Inclination:</th>
+				<td><input type="number" value="28" id="inclination" onchange="do_gto_calculate();" /> °</td>
+			</tr>
+			<tr>
+				<th>Satellite mass:</th>
+				<td><input type="number" value="7060" id="sat_mass" onchange="do_gto_calculate();" /> kg</td>
+			</tr>
+			<tr>
+				<th>Satellite Isp:</th>
+				<td><input type="number" value="3160" id="prop_isp" onchange="do_gto_calculate();" /> m/s</td>
+			</tr>
+		</tbody>
+		<tfoot>
+			<tr>
+				<th colspan="2">
+					<input type="button" value="Reset" onclick="do_reset();" />
+					<input type="button" value="m/s" id="speed_unit" onclick="do_change_speed_unit(this);" />
+					<input type="button" value="seconds" id="time_unit" onclick="do_change_time_unit(this);" />
+				</th>
+			</tr>
+		</tfoot>
+	</table>
+</form>
+
+<div id="speed_area">
+	<table>
+		<tr>
+			<th>Perigee speed:</th>
+			<td><input type="number" id="perigee_orbit_speed" onchange="do_change_perigee_orbit_speed(this);" /><span class="speed_unit_label">m/s</span></td>
+			<td>(ground:<input type="number" id="perigee_ground_speed" onchange="do_change_perigee_ground_speed(this);" /><span class="speed_unit_label">m/s</span>)</td>
+		</tr>
+		<tr>
+			<th>Apogee speed:</th>
+			<td><input type="number" id="apogee_orbit_speed" onchange="do_change_apogee_orbit_speed(this);" /><span class="speed_unit_label">m/s</span></td>
+			<td>(ground:<input type="number" id="apogee_ground_speed" onchange="do_change_apogee_ground_speed(this);" /><span class="speed_unit_label">m/s</span>)</td>
+		</tr>
+	</table>
+</div>
+
+<textarea id="output_area" readonly></textarea>
+</body>
+</html>

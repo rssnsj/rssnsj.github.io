@@ -175,6 +175,10 @@ class IndexWriter:
                 continue
             if file.getFileName() == ".git":
                 continue
+            if file.getFileName() == "LICENSE":
+                continue
+            if file.getFileName() == "README.md":
+                continue
             if file.getFileName() == "share":
                 continue
             if file.getFileName() == "apindex.py":
